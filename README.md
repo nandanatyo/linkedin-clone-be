@@ -2,6 +2,8 @@
 
 ## 📖 Overview
 
+Postman: https://www.postman.com/tyo-team/workspace/dot/collection/32354585-29d3bd01-8e84-471c-89a6-c24beaf5743c?action=share&creator=32354585
+
 LinkedIn Clone API adalah aplikasi backend yang mensimulasikan fitur-fitur utama LinkedIn menggunakan Go (Golang) dengan framework Gin. Aplikasi ini menyediakan fitur manajemen pengguna, posting, job listings, dan aplikasi kerja dengan sistem autentikasi JWT yang lengkap.
 
 ## 🎯 Features

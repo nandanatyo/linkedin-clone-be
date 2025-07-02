@@ -75,7 +75,6 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		"username", req.Username,
 		"full_name", req.FullName)
 
-	// Add gin context to the context for extractRequestInfo method
 	ctxWithGin := context.WithValue(ctx, "gin_context", c)
 
 	result, err := h.authService.Register(ctxWithGin, &req)
@@ -184,7 +183,6 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		Success:   false,
 	})
 
-	// Add gin context to the context for extractRequestInfo method
 	ctxWithGin := context.WithValue(ctx, "gin_context", c)
 
 	result, err := h.authService.Login(ctxWithGin, &req)

@@ -311,14 +311,13 @@ func (s *authService) RevokeAllUserSessions(ctx context.Context, userID uint) er
 }
 
 func (s *authService) extractRequestInfo(ctx context.Context) (userAgent, ipAddress string) {
-	// Try to get from gin context first
+
 	if ginCtx, ok := ctx.Value("gin_context").(*gin.Context); ok {
 		userAgent = ginCtx.Request.UserAgent()
 		ipAddress = ginCtx.ClientIP()
 		return userAgent, ipAddress
 	}
 
-	// Fallback: try to get from context values
 	if ua := ctx.Value("user_agent"); ua != nil {
 		if userAgentStr, ok := ua.(string); ok {
 			userAgent = userAgentStr

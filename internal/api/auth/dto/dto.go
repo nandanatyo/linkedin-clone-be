@@ -30,13 +30,22 @@ type ResetPasswordRequest struct {
 }
 
 type RefreshTokenRequest struct {
-	Token string `json:"token" validate:"required"`
+	RefreshToken string `json:"refresh_token" validate:"required"`
 }
 
 type AuthResponse struct {
-	User      *UserResponse `json:"user"`
-	Token     string        `json:"token"`
-	ExpiresAt time.Time     `json:"expires_at"`
+	User             *UserResponse `json:"user"`
+	AccessToken      string        `json:"access_token"`
+	RefreshToken     string        `json:"refresh_token"`
+	ExpiresAt        time.Time     `json:"expires_at"`
+	RefreshExpiresAt time.Time     `json:"refresh_expires_at"`
+}
+
+type TokenResponse struct {
+	AccessToken      string    `json:"access_token"`
+	RefreshToken     string    `json:"refresh_token"`
+	ExpiresAt        time.Time `json:"expires_at"`
+	RefreshExpiresAt time.Time `json:"refresh_expires_at"`
 }
 
 type UserResponse struct {

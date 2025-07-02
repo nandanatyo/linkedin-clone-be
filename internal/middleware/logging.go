@@ -24,20 +24,17 @@ func LoggerMiddleware(logger logger.Logger) gin.HandlerFunc {
 	return gin.HandlerFunc(func(c *gin.Context) {
 		start := time.Now()
 
-		// Capture request body for non-sensitive endpoints
 		var requestBody []byte
 		if c.Request.Body != nil && !containsSensitiveData(c.Request.URL.Path) {
 			requestBody, _ = io.ReadAll(c.Request.Body)
 			c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
 		}
 
-		// Capture response
 		w := &responseWriter{body: &bytes.Buffer{}, ResponseWriter: c.Writer}
 		c.Writer = w
 
 		c.Next()
 
-		// Log request and response
 		latency := time.Since(start)
 		requestID := c.GetString("request_id")
 
@@ -54,17 +51,14 @@ func LoggerMiddleware(logger logger.Logger) gin.HandlerFunc {
 			"response_size": w.body.Len(),
 		}
 
-		// Add user context if available
 		if userID := GetUserID(c); userID != 0 {
 			fields["user_id"] = userID
 		}
 
-		// Add request body to logs for debugging (excluding sensitive data)
-		if len(requestBody) > 0 && len(requestBody) < 1000 { // Limit size
+		if len(requestBody) > 0 && len(requestBody) < 1000 {
 			fields["request_body"] = string(requestBody)
 		}
 
-		// Add response body for errors (excluding large responses)
 		if c.Writer.Status() >= 400 && w.body.Len() < 1000 {
 			fields["response_body"] = w.body.String()
 		}

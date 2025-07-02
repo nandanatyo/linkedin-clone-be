@@ -4,82 +4,113 @@ import (
 	"context"
 	"linked-clone/internal/domain/entities"
 	"linked-clone/internal/domain/repositories"
-	"time"
 
 	"gorm.io/gorm"
 )
 
-type userRepository struct {
+type connectionRepository struct {
 	db *gorm.DB
 }
 
-func NewUserRepository(db *gorm.DB) repositories.UserRepository {
-	return &userRepository{db: db}
+func NewConnectionRepository(db *gorm.DB) repositories.ConnectionRepository {
+	return &connectionRepository{db: db}
 }
 
-func (r *userRepository) Create(ctx context.Context, user *entities.User) error {
-	return r.db.WithContext(ctx).Create(user).Error
+func (r *connectionRepository) Create(ctx context.Context, connection *entities.Connection) error {
+	return r.db.WithContext(ctx).Create(connection).Error
 }
 
-func (r *userRepository) GetByID(ctx context.Context, id uint) (*entities.User, error) {
-	var user entities.User
-	err := r.db.WithContext(ctx).First(&user, id).Error
-	if err != nil {
-		return nil, err
-	}
-	return &user, nil
-}
-
-func (r *userRepository) GetByEmail(ctx context.Context, email string) (*entities.User, error) {
-	var user entities.User
-	err := r.db.WithContext(ctx).Where("email = ?", email).First(&user).Error
-	if err != nil {
-		return nil, err
-	}
-	return &user, nil
-}
-
-func (r *userRepository) GetByUsername(ctx context.Context, username string) (*entities.User, error) {
-	var user entities.User
-	err := r.db.WithContext(ctx).Where("username = ?", username).First(&user).Error
-	if err != nil {
-		return nil, err
-	}
-	return &user, nil
-}
-
-func (r *userRepository) Update(ctx context.Context, user *entities.User) error {
-	return r.db.WithContext(ctx).Save(user).Error
-}
-
-func (r *userRepository) Delete(ctx context.Context, id uint) error {
-	return r.db.WithContext(ctx).Delete(&entities.User{}, id).Error
-}
-
-func (r *userRepository) Search(ctx context.Context, query string, limit, offset int) ([]*entities.User, error) {
-	var users []*entities.User
+func (r *connectionRepository) GetByID(ctx context.Context, id uint) (*entities.Connection, error) {
+	var connection entities.Connection
 	err := r.db.WithContext(ctx).
-		Where("full_name ILIKE ? OR username ILIKE ?", "%"+query+"%", "%"+query+"%").
+		Preload("Requester").
+		Preload("Addressee").
+		First(&connection, id).Error
+	if err != nil {
+		return nil, err
+	}
+	return &connection, nil
+}
+
+func (r *connectionRepository) FindConnection(ctx context.Context, requesterID, addresseeID uint) (*entities.Connection, error) {
+	var connection entities.Connection
+	err := r.db.WithContext(ctx).
+		Where("(requester_id = ? AND addressee_id = ?) OR (requester_id = ? AND addressee_id = ?)",
+			requesterID, addresseeID, addresseeID, requesterID).
+		First(&connection).Error
+	if err != nil {
+		return nil, err
+	}
+	return &connection, nil
+}
+
+func (r *connectionRepository) GetUserConnections(ctx context.Context, userID uint, status entities.ConnectionStatus, limit, offset int) ([]*entities.Connection, error) {
+	var connections []*entities.Connection
+	query := r.db.WithContext(ctx).
+		Preload("Requester").
+		Preload("Addressee").
+		Where("(requester_id = ? OR addressee_id = ?) AND status = ?", userID, userID, status).
+		Order("created_at DESC").
+		Limit(limit).
+		Offset(offset)
+
+	err := query.Find(&connections).Error
+	return connections, err
+}
+
+func (r *connectionRepository) GetConnectionRequests(ctx context.Context, userID uint, limit, offset int) ([]*entities.Connection, error) {
+	var connections []*entities.Connection
+	err := r.db.WithContext(ctx).
+		Preload("Requester").
+		Preload("Addressee").
+		Where("addressee_id = ? AND status = ?", userID, entities.ConnectionPending).
+		Order("created_at DESC").
 		Limit(limit).
 		Offset(offset).
-		Find(&users).Error
-	return users, err
+		Find(&connections).Error
+	return connections, err
 }
 
-func (r *userRepository) VerifyEmail(ctx context.Context, userID uint) error {
-	return r.db.WithContext(ctx).Model(&entities.User{}).
-		Where("id = ?", userID).
-		Update("is_verified", true).Error
+func (r *connectionRepository) GetSentRequests(ctx context.Context, userID uint, limit, offset int) ([]*entities.Connection, error) {
+	var connections []*entities.Connection
+	err := r.db.WithContext(ctx).
+		Preload("Requester").
+		Preload("Addressee").
+		Where("requester_id = ? AND status = ?", userID, entities.ConnectionPending).
+		Order("created_at DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&connections).Error
+	return connections, err
 }
 
-func (r *userRepository) UpdatePremiumStatus(ctx context.Context, userID uint, isPremium bool, premiumUntil *time.Time) error {
-	updates := map[string]interface{}{
-		"is_premium": isPremium,
-	}
-	if premiumUntil != nil {
-		updates["premium_until"] = premiumUntil
-	}
-	return r.db.WithContext(ctx).Model(&entities.User{}).
-		Where("id = ?", userID).
-		Updates(updates).Error
+func (r *connectionRepository) Update(ctx context.Context, connection *entities.Connection) error {
+	return r.db.WithContext(ctx).Save(connection).Error
+}
+
+func (r *connectionRepository) Delete(ctx context.Context, id uint) error {
+	return r.db.WithContext(ctx).Delete(&entities.Connection{}, id).Error
+}
+
+func (r *connectionRepository) GetMutualConnections(ctx context.Context, userID1, userID2 uint, limit, offset int) ([]*entities.Connection, error) {
+	var connections []*entities.Connection
+
+	subQuery1 := r.db.Select("CASE WHEN requester_id = ? THEN addressee_id ELSE requester_id END as connected_user", userID1).
+		Where("(requester_id = ? OR addressee_id = ?) AND status = ?", userID1, userID1, entities.ConnectionAccepted).
+		Table("connections")
+
+	subQuery2 := r.db.Select("CASE WHEN requester_id = ? THEN addressee_id ELSE requester_id END as connected_user", userID2).
+		Where("(requester_id = ? OR addressee_id = ?) AND status = ?", userID2, userID2, entities.ConnectionAccepted).
+		Table("connections")
+
+	err := r.db.WithContext(ctx).
+		Preload("Requester").
+		Preload("Addressee").
+		Where("(requester_id IN (?) OR addressee_id IN (?)) AND status = ?", subQuery1, subQuery1, entities.ConnectionAccepted).
+		Where("(requester_id IN (?) OR addressee_id IN (?))", subQuery2, subQuery2).
+		Limit(limit).
+		Offset(offset).
+		Find(&connections).Error
+
+	return connections, err
 }

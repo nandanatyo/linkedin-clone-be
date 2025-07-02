@@ -84,10 +84,10 @@ func (s *authService) Register(ctx context.Context, req *dto.RegisterRequest) (*
 		}()
 	}
 
-	token, err := s.jwtService.GenerateToken(user.ID, user.Email, user.Username)
+	tokens, err := s.jwtService.GenerateTokens(user.ID, user.Email, user.Username)
 	if err != nil {
-		s.logger.Error("Failed to generate token", "error", err)
-		return nil, errors.New("failed to generate token")
+		s.logger.Error("Failed to generate tokens", "error", err)
+		return nil, errors.New("failed to generate tokens")
 	}
 
 	return &dto.AuthResponse{
@@ -101,8 +101,10 @@ func (s *authService) Register(ctx context.Context, req *dto.RegisterRequest) (*
 			IsVerified:     user.IsVerified,
 			IsPremium:      user.IsPremium,
 		},
-		Token:     token.AccessToken,
-		ExpiresAt: token.ExpiresAt,
+		AccessToken:      tokens.AccessToken,
+		RefreshToken:     tokens.RefreshToken,
+		ExpiresAt:        tokens.ExpiresAt,
+		RefreshExpiresAt: tokens.RefreshExpiresAt,
 	}, nil
 }
 
@@ -121,10 +123,10 @@ func (s *authService) Login(ctx context.Context, req *dto.LoginRequest) (*dto.Au
 		return nil, errors.New("invalid email or password")
 	}
 
-	token, err := s.jwtService.GenerateToken(user.ID, user.Email, user.Username)
+	tokens, err := s.jwtService.GenerateTokens(user.ID, user.Email, user.Username)
 	if err != nil {
-		s.logger.Error("Failed to generate token", "error", err)
-		return nil, errors.New("failed to generate token")
+		s.logger.Error("Failed to generate tokens", "error", err)
+		return nil, errors.New("failed to generate tokens")
 	}
 
 	return &dto.AuthResponse{
@@ -138,8 +140,49 @@ func (s *authService) Login(ctx context.Context, req *dto.LoginRequest) (*dto.Au
 			IsVerified:     user.IsVerified,
 			IsPremium:      user.IsPremium,
 		},
-		Token:     token.AccessToken,
-		ExpiresAt: token.ExpiresAt,
+		AccessToken:      tokens.AccessToken,
+		RefreshToken:     tokens.RefreshToken,
+		ExpiresAt:        tokens.ExpiresAt,
+		RefreshExpiresAt: tokens.RefreshExpiresAt,
+	}, nil
+}
+
+func (s *authService) RefreshToken(ctx context.Context, req *dto.RefreshTokenRequest) (*dto.AuthResponse, error) {
+
+	tokens, err := s.jwtService.RefreshAccessToken(req.RefreshToken)
+	if err != nil {
+		return nil, errors.New("invalid refresh token")
+	}
+
+	claims, err := s.jwtService.ValidateRefreshToken(req.RefreshToken)
+	if err != nil {
+		return nil, errors.New("invalid refresh token")
+	}
+
+	user, err := s.userRepo.GetByID(ctx, claims.UserID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("user not found")
+		}
+		s.logger.Error("Failed to get user", "error", err)
+		return nil, errors.New("failed to refresh token")
+	}
+
+	return &dto.AuthResponse{
+		User: &dto.UserResponse{
+			ID:             user.ID,
+			Email:          user.Email,
+			Username:       user.Username,
+			FullName:       user.FullName,
+			ProfilePicture: user.ProfilePicture,
+			Bio:            user.Bio,
+			IsVerified:     user.IsVerified,
+			IsPremium:      user.IsPremium,
+		},
+		AccessToken:      tokens.AccessToken,
+		RefreshToken:     tokens.RefreshToken,
+		ExpiresAt:        tokens.ExpiresAt,
+		RefreshExpiresAt: tokens.RefreshExpiresAt,
 	}, nil
 }
 
@@ -231,42 +274,4 @@ func (s *authService) ResetPassword(ctx context.Context, req *dto.ResetPasswordR
 	s.redisClient.Delete(ctx, cacheKey)
 
 	return nil
-}
-
-func (s *authService) RefreshToken(ctx context.Context, req *dto.RefreshTokenRequest) (*dto.AuthResponse, error) {
-
-	claims, err := s.jwtService.ValidateToken(req.Token)
-	if err != nil {
-		return nil, errors.New("invalid token")
-	}
-
-	user, err := s.userRepo.GetByID(ctx, claims.UserID)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.New("user not found")
-		}
-		s.logger.Error("Failed to get user", "error", err)
-		return nil, errors.New("failed to refresh token")
-	}
-
-	token, err := s.jwtService.GenerateToken(user.ID, user.Email, user.Username)
-	if err != nil {
-		s.logger.Error("Failed to generate token", "error", err)
-		return nil, errors.New("failed to generate token")
-	}
-
-	return &dto.AuthResponse{
-		User: &dto.UserResponse{
-			ID:             user.ID,
-			Email:          user.Email,
-			Username:       user.Username,
-			FullName:       user.FullName,
-			ProfilePicture: user.ProfilePicture,
-			Bio:            user.Bio,
-			IsVerified:     user.IsVerified,
-			IsPremium:      user.IsPremium,
-		},
-		Token:     token.AccessToken,
-		ExpiresAt: token.ExpiresAt,
-	}, nil
 }

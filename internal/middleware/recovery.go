@@ -13,7 +13,6 @@ func RecoveryMiddleware(logger logger.Logger) gin.HandlerFunc {
 	return gin.HandlerFunc(func(c *gin.Context) {
 		defer func() {
 			if err := recover(); err != nil {
-				// Log the panic
 				logger.Error("Panic recovered", map[string]interface{}{
 					"error":      err,
 					"stack":      string(debug.Stack()),
@@ -24,7 +23,6 @@ func RecoveryMiddleware(logger logger.Logger) gin.HandlerFunc {
 					"request_id": c.GetString("request_id"),
 				})
 
-				// Return error response
 				response.Error(c, http.StatusInternalServerError, "Internal server error", "An unexpected error occurred")
 				c.Abort()
 			}

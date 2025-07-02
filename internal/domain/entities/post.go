@@ -15,7 +15,6 @@ type Post struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 
-	// Relationships
 	User     User      `gorm:"foreignKey:UserID" json:"user,omitempty"`
 	Likes    []Like    `gorm:"foreignKey:PostID" json:"likes,omitempty"`
 	Comments []Comment `gorm:"foreignKey:PostID" json:"comments,omitempty"`
@@ -28,7 +27,6 @@ type Like struct {
 	CreatedAt time.Time      `json:"created_at"`
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 
-	// Relationships
 	User User `gorm:"foreignKey:UserID" json:"user,omitempty"`
 	Post Post `gorm:"foreignKey:PostID" json:"post,omitempty"`
 }
@@ -42,7 +40,6 @@ type Comment struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 
-	// Relationships
 	User User `gorm:"foreignKey:UserID" json:"user,omitempty"`
 	Post Post `gorm:"foreignKey:PostID" json:"post,omitempty"`
 }

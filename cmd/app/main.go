@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -16,7 +17,6 @@ import (
 )
 
 func main() {
-
 	if err := godotenv.Load(); err != nil {
 		log.Printf("Warning: .env file not found: %v", err)
 	}
@@ -61,14 +61,15 @@ func main() {
 		},
 	})
 
-	if err := database.AutoMigrate(db); err != nil {
+	migrationsDir := filepath.Join("migrations")
+	if err := database.RunMigrations(cfg.Database, migrationsDir); err != nil {
 		structuredLogger.LogBusinessEvent(context.Background(), logger.BusinessEventLog{
 			Event:   "database_migration_failed",
 			Entity:  "database",
 			Success: false,
 			Error:   err.Error(),
 		})
-		structuredLogger.Fatal("Failed to migrate database", "error", err)
+		structuredLogger.Fatal("Failed to run database migrations", "error", err)
 	}
 
 	structuredLogger.LogBusinessEvent(context.Background(), logger.BusinessEventLog{

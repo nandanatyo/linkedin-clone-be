@@ -286,35 +286,3 @@ func getSpanIDFromContext(ctx context.Context) string {
 	}
 	return ""
 }
-
-func getCorrelationIDFromContext(ctx context.Context) string {
-	if correlationID := ctx.Value("correlation_id"); correlationID != nil {
-		return correlationID.(string)
-	}
-	return ""
-}
-
-func AddTraceTag(ctx context.Context, key string, value interface{}) {
-	if span := ctx.Value("trace_span"); span != nil {
-		if traceSpan, ok := span.(*TraceSpan); ok {
-			if traceSpan.Tags == nil {
-				traceSpan.Tags = make(map[string]interface{})
-			}
-			traceSpan.Tags[key] = value
-		}
-	}
-}
-
-func AddTraceLog(ctx context.Context, level, message string, fields map[string]interface{}) {
-	if span := ctx.Value("trace_span"); span != nil {
-		if traceSpan, ok := span.(*TraceSpan); ok {
-			log := TraceLog{
-				Timestamp: time.Now(),
-				Level:     level,
-				Message:   message,
-				Fields:    fields,
-			}
-			traceSpan.Logs = append(traceSpan.Logs, log)
-		}
-	}
-}

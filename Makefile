@@ -37,3 +37,35 @@ test-race: test-clean
 
 # Setup and run tests
 test-setup: test-db test
+
+.PHONY: migrate-up migrate-down migrate-status migrate-create migrate-reset
+
+# Run all pending migrations
+migrate-up:
+	go run cmd/migrate/main.go -command=up
+
+# Show migration status
+migrate-status:
+	go run cmd/migrate/main.go -command=status
+
+# Create a new migration
+migrate-create:
+	@read -p "Enter migration name: " name; \
+	go run cmd/migrate/main.go -command=create -name=$$name
+
+# Run migrations for development
+dev-migrate:
+	go run cmd/migrate/main.go -command=up
+
+# Database setup for development
+dev-setup: dev-migrate
+	@echo "Database setup completed"
+
+.DEFAULT_GOAL := help
+help:
+	@echo "Available commands:"
+	@echo "  migrate-up      - Run all pending migrations"
+	@echo "  migrate-status  - Show migration status"
+	@echo "  migrate-create  - Create a new migration (interactive)"
+	@echo "  dev-migrate     - Run migrations for development"
+	@echo "  dev-setup       - Complete database setup for development"

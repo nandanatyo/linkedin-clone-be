@@ -180,7 +180,18 @@ func (h *PostHandler) LikePost(c *gin.Context) {
 	like, err := h.postService.LikePost(c.Request.Context(), userID, uint(postID))
 	if err != nil {
 		h.logger.Error("Failed to like post", "error", err)
-		response.Error(c, http.StatusBadRequest, "Failed to like post", err.Error())
+
+		if err.Error() == "post already liked" {
+			response.Error(c, http.StatusConflict, "Post already liked", "")
+			return
+		}
+
+		if err.Error() == "post not found" {
+			response.Error(c, http.StatusNotFound, "Post not found", "")
+			return
+		}
+
+		response.Error(c, http.StatusInternalServerError, "Failed to like post", err.Error())
 		return
 	}
 
@@ -199,11 +210,43 @@ func (h *PostHandler) UnlikePost(c *gin.Context) {
 
 	if err := h.postService.UnlikePost(c.Request.Context(), userID, uint(postID)); err != nil {
 		h.logger.Error("Failed to unlike post", "error", err)
-		response.Error(c, http.StatusBadRequest, "Failed to unlike post", err.Error())
+
+		if err.Error() == "like not found" {
+			response.Error(c, http.StatusNotFound, "Like not found", "")
+			return
+		}
+
+		response.Error(c, http.StatusInternalServerError, "Failed to unlike post", err.Error())
 		return
 	}
 
 	response.Success(c, gin.H{"message": "Post unliked successfully"})
+}
+
+func (h *PostHandler) GetPostLikes(c *gin.Context) {
+	idStr := c.Param("id")
+	postID, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid post ID", err.Error())
+		return
+	}
+
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+	likes, err := h.postService.GetPostLikes(c.Request.Context(), uint(postID), limit, offset)
+	if err != nil {
+		h.logger.Error("Failed to get post likes", "error", err)
+		response.Error(c, http.StatusInternalServerError, "Failed to get post likes", err.Error())
+		return
+	}
+
+	response.Success(c, gin.H{
+		"likes":   likes,
+		"post_id": postID,
+		"limit":   limit,
+		"offset":  offset,
+	})
 }
 
 func (h *PostHandler) AddComment(c *gin.Context) {
@@ -230,6 +273,12 @@ func (h *PostHandler) AddComment(c *gin.Context) {
 	comment, err := h.postService.AddComment(c.Request.Context(), userID, uint(postID), &req)
 	if err != nil {
 		h.logger.Error("Failed to add comment", "error", err)
+
+		if err.Error() == "post not found" {
+			response.Error(c, http.StatusNotFound, "Post not found", "")
+			return
+		}
+
 		response.Error(c, http.StatusInternalServerError, "Failed to add comment", err.Error())
 		return
 	}
@@ -251,6 +300,12 @@ func (h *PostHandler) GetComments(c *gin.Context) {
 	comments, err := h.postService.GetComments(c.Request.Context(), uint(postID), limit, offset)
 	if err != nil {
 		h.logger.Error("Failed to get comments", "error", err)
+
+		if err.Error() == "post not found" {
+			response.Error(c, http.StatusNotFound, "Post not found", "")
+			return
+		}
+
 		response.Error(c, http.StatusInternalServerError, "Failed to get comments", err.Error())
 		return
 	}
@@ -261,4 +316,79 @@ func (h *PostHandler) GetComments(c *gin.Context) {
 		"limit":    limit,
 		"offset":   offset,
 	})
+}
+
+func (h *PostHandler) UpdateComment(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+
+	commentIDStr := c.Param("commentId")
+	commentID, err := strconv.ParseUint(commentIDStr, 10, 32)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid comment ID", err.Error())
+		return
+	}
+
+	var req struct {
+		Content string `json:"content" validate:"required,min=1,max=500"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid request body", err.Error())
+		return
+	}
+
+	if err := h.validator.Validate(&req); err != nil {
+		response.ValidationErrors(c, err)
+		return
+	}
+
+	comment, err := h.postService.UpdateComment(c.Request.Context(), userID, uint(commentID), req.Content)
+	if err != nil {
+		h.logger.Error("Failed to update comment", "error", err)
+
+		if err.Error() == "comment not found" {
+			response.Error(c, http.StatusNotFound, "Comment not found", "")
+			return
+		}
+
+		if err.Error() == "unauthorized to update this comment" {
+			response.Error(c, http.StatusForbidden, "Unauthorized", "You can only update your own comments")
+			return
+		}
+
+		response.Error(c, http.StatusInternalServerError, "Failed to update comment", err.Error())
+		return
+	}
+
+	response.Success(c, comment)
+}
+
+func (h *PostHandler) DeleteComment(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+
+	commentIDStr := c.Param("commentId")
+	commentID, err := strconv.ParseUint(commentIDStr, 10, 32)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "Invalid comment ID", err.Error())
+		return
+	}
+
+	if err := h.postService.DeleteComment(c.Request.Context(), userID, uint(commentID)); err != nil {
+		h.logger.Error("Failed to delete comment", "error", err)
+
+		if err.Error() == "comment not found" {
+			response.Error(c, http.StatusNotFound, "Comment not found", "")
+			return
+		}
+
+		if err.Error() == "unauthorized to delete this comment" {
+			response.Error(c, http.StatusForbidden, "Unauthorized", "You can only delete your own comments")
+			return
+		}
+
+		response.Error(c, http.StatusInternalServerError, "Failed to delete comment", err.Error())
+		return
+	}
+
+	response.Success(c, gin.H{"message": "Comment deleted successfully"})
 }

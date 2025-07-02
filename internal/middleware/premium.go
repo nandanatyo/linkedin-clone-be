@@ -27,14 +27,12 @@ func PremiumMiddleware(userRepo repositories.UserRepository, logger logger.Logge
 			return
 		}
 
-		// Check if user is premium and subscription is still valid
 		if !user.IsPremium {
 			response.Error(c, http.StatusForbidden, "Premium subscription required", "This feature requires a premium subscription")
 			c.Abort()
 			return
 		}
 
-		// Check if premium subscription is not expired
 		if user.PremiumUntil != nil && user.PremiumUntil.Before(time.Now()) {
 			response.Error(c, http.StatusForbidden, "Premium subscription expired", "Your premium subscription has expired")
 			c.Abort()

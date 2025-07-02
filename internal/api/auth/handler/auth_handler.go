@@ -75,7 +75,6 @@ func (h *AuthHandler) Register(c *gin.Context) {
 
 	result, err := h.authService.Register(ctx, &req)
 	if err != nil {
-
 		switch {
 		case err.Error() == "email already registered":
 			appErr := errors.ConflictError("Email already registered").
@@ -182,7 +181,6 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	result, err := h.authService.Login(ctx, &req)
 	if err != nil {
-
 		h.logger.WithTraceID(traceID).LogAuthEvent(ctx, logger.AuthEventLog{
 			Email:      req.Email,
 			Action:     "login_failed",
@@ -340,11 +338,9 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 	})
 
 	if err := h.authService.ForgotPassword(ctx, &req); err != nil {
-
 		h.logger.WithTraceID(traceID).Error("Password reset failed",
 			"error", err.Error(),
 			"email", req.Email)
-
 	}
 
 	response.Success(c, gin.H{"message": "Reset code sent to your email"})
@@ -431,14 +427,37 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 			WithContext("raw_error", err.Error()).
 			WithComponent("auth_handler").
 			WithOperation("refresh_token")
+
+		h.logger.WithTraceID(traceID).LogValidationError(ctx, logger.ValidationErrorLog{
+			Field:    "request_body",
+			Rule:     "json_binding",
+			Message:  err.Error(),
+			Resource: "refresh_token",
+		})
+
 		response.BadRequest(c, appErr.Message, appErr.Details)
 		return
 	}
 
 	if err := h.validator.Validate(&req); err != nil {
+		h.logger.WithTraceID(traceID).LogValidationError(ctx, logger.ValidationErrorLog{
+			Field:    "validation",
+			Rule:     "struct_validation",
+			Message:  err.Error(),
+			Resource: "refresh_token",
+		})
+
 		response.ValidationErrors(c, err)
 		return
 	}
+
+	h.logger.WithTraceID(traceID).LogAuthEvent(ctx, logger.AuthEventLog{
+		Action:    "token_refresh_attempt",
+		IP:        c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
+		Success:   false,
+		TokenType: "refresh_token",
+	})
 
 	result, err := h.authService.RefreshToken(ctx, &req)
 	if err != nil {
@@ -451,9 +470,21 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 			TokenType:  "refresh_token",
 		})
 
+		h.logger.WithTraceID(traceID).LogSecurityEvent(ctx, logger.SecurityEventLog{
+			EventType:   "invalid_refresh_token",
+			Description: "Failed refresh token attempt",
+			Severity:    "medium",
+			IP:          c.ClientIP(),
+			UserAgent:   c.Request.UserAgent(),
+			Details: map[string]interface{}{
+				"error": err.Error(),
+			},
+			Blocked: false,
+		})
+
 		switch {
-		case err.Error() == "invalid token":
-			appErr := errors.AuthenticationError("Invalid token").
+		case err.Error() == "invalid refresh token":
+			appErr := errors.AuthenticationError("Invalid refresh token").
 				WithComponent("auth_service").
 				WithOperation("refresh_token")
 			response.Unauthorized(c, appErr.Message)
@@ -482,6 +513,19 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 		UserAgent: c.Request.UserAgent(),
 		Success:   true,
 		TokenType: "access_token",
+	})
+
+	h.logger.WithTraceID(traceID).LogBusinessEvent(ctx, logger.BusinessEventLog{
+		Event:    "token_refreshed",
+		Entity:   "auth_token",
+		EntityID: string(rune(result.User.ID)),
+		UserID:   result.User.ID,
+		Success:  true,
+		Details: map[string]interface{}{
+			"user_id":  result.User.ID,
+			"email":    result.User.Email,
+			"username": result.User.Username,
+		},
 	})
 
 	response.Success(c, result)

@@ -317,6 +317,35 @@ func (s *postService) UnlikePost(ctx context.Context, userID, postID uint) error
 	return nil
 }
 
+func (s *postService) GetPostLikes(ctx context.Context, postID uint, limit, offset int) ([]*dto.LikeResponse, error) {
+
+	_, err := s.postRepo.GetByID(ctx, postID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, errors.New("post not found")
+		}
+		s.logger.Error("Failed to get post", "error", err)
+		return nil, errors.New("failed to get post")
+	}
+
+	likes, err := s.likeRepo.GetPostLikes(ctx, postID, limit, offset)
+	if err != nil {
+		s.logger.Error("Failed to get post likes", "error", err)
+		return nil, errors.New("failed to get post likes")
+	}
+
+	var responses []*dto.LikeResponse
+	for _, like := range likes {
+		responses = append(responses, &dto.LikeResponse{
+			ID:     like.ID,
+			UserID: like.UserID,
+			PostID: like.PostID,
+		})
+	}
+
+	return responses, nil
+}
+
 func (s *postService) AddComment(ctx context.Context, userID, postID uint, req *dto.AddCommentRequest) (*dto.CommentResponse, error) {
 
 	_, err := s.postRepo.GetByID(ctx, postID)

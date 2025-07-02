@@ -78,7 +78,7 @@ func RefreshTokenMiddleware(jwtService auth.JWTService, logger logger.Logger) gi
 			return
 		}
 
-		claims, err := jwtService.ValidateRefreshToken(token)
+		claims, err := jwtService.ValidateRefreshToken(c, token)
 		if err != nil {
 			logger.Error("Refresh token validation failed", "error", err)
 			response.Error(c, http.StatusUnauthorized, "Invalid or expired refresh token", err.Error())

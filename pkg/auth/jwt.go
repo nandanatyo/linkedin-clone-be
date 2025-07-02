@@ -1,11 +1,17 @@
 package auth
 
 import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
-	"github.com/google/uuid"
+	"linked-clone/internal/domain/entities"
+	"linked-clone/internal/domain/repositories"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
 
 type JWTClaims struct {
@@ -13,6 +19,7 @@ type JWTClaims struct {
 	Email     string `json:"email"`
 	Username  string `json:"username"`
 	TokenType string `json:"token_type"`
+	SessionID uint   `json:"session_id,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -21,22 +28,29 @@ type TokenResponse struct {
 	RefreshToken     string    `json:"refresh_token"`
 	ExpiresAt        time.Time `json:"expires_at"`
 	RefreshExpiresAt time.Time `json:"refresh_expires_at"`
+	SessionID        uint      `json:"session_id,omitempty"`
 }
 
 type JWTService interface {
-	GenerateTokens(userID uint, email, username string) (*TokenResponse, error)
+	GenerateTokens(ctx context.Context, userID uint, email, username, userAgent, ipAddress string) (*TokenResponse, error)
 	ValidateToken(tokenString string) (*JWTClaims, error)
-	ValidateRefreshToken(tokenString string) (*JWTClaims, error)
-	RefreshAccessToken(refreshToken string) (*TokenResponse, error)
+	ValidateRefreshToken(ctx context.Context, refreshToken string) (*JWTClaims, error)
+	RefreshAccessToken(ctx context.Context, refreshToken, userAgent, ipAddress string) (*TokenResponse, error)
+	RevokeSession(ctx context.Context, sessionID uint) error
+	RevokeUserSessions(ctx context.Context, userID uint) error
+	RevokeRefreshToken(ctx context.Context, refreshToken string) error
+	GetUserActiveSessions(ctx context.Context, userID uint, limit, offset int) ([]*entities.Session, error)
+	CleanupExpiredSessions(ctx context.Context) error
 }
 
 type jwtService struct {
 	secretKey          string
 	accessTokenExpiry  int
 	refreshTokenExpiry int
+	sessionRepo        repositories.SessionRepository
 }
 
-func NewJWTService(secretKey string, accessTokenExpiryHours int) JWTService {
+func NewJWTService(secretKey string, accessTokenExpiryHours int, sessionRepo repositories.SessionRepository) JWTService {
 	refreshTokenExpiryDays := 30
 	if accessTokenExpiryHours > 24 {
 		refreshTokenExpiryDays = accessTokenExpiryHours / 24 * 2
@@ -46,17 +60,51 @@ func NewJWTService(secretKey string, accessTokenExpiryHours int) JWTService {
 		secretKey:          secretKey,
 		accessTokenExpiry:  accessTokenExpiryHours,
 		refreshTokenExpiry: refreshTokenExpiryDays,
+		sessionRepo:        sessionRepo,
 	}
 }
 
-func (s *jwtService) GenerateTokens(userID uint, email, username string) (*TokenResponse, error) {
+// pkg/auth/jwt.go - UPDATED GENERATE TOKENS METHOD
 
+func (s *jwtService) GenerateTokens(ctx context.Context, userID uint, email, username, userAgent, ipAddress string) (*TokenResponse, error) {
+	// Generate refresh token
+	refreshToken, err := s.generateSecureToken()
+	if err != nil {
+		return nil, err
+	}
+
+	// Create token hash for storage
+	tokenHash := s.hashToken(refreshToken)
+
+	// Set expiration times
 	accessExpiresAt := time.Now().Add(time.Duration(s.accessTokenExpiry) * time.Hour)
+	refreshExpiresAt := time.Now().Add(time.Duration(s.refreshTokenExpiry) * 24 * time.Hour)
+
+	// Create session record
+	session := &entities.Session{
+		UserID:       userID,
+		RefreshToken: refreshToken,
+		TokenHash:    tokenHash,
+		Status:       entities.SessionActive,
+		ExpiresAt:    refreshExpiresAt,
+		LastUsedAt:   nil, // Will be set on first use
+	}
+
+	// Set user agent and IP address safely using helper methods
+	session.SetUserAgent(userAgent)
+	session.SetIPAddress(ipAddress)
+
+	if err := s.sessionRepo.Create(ctx, session); err != nil {
+		return nil, err
+	}
+
+	// Generate access token with session ID
 	accessClaims := &JWTClaims{
 		UserID:    userID,
 		Email:     email,
 		Username:  username,
 		TokenType: "access",
+		SessionID: session.ID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(accessExpiresAt),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -73,33 +121,91 @@ func (s *jwtService) GenerateTokens(userID uint, email, username string) (*Token
 		return nil, err
 	}
 
-	refreshExpiresAt := time.Now().Add(time.Duration(s.refreshTokenExpiry) * 24 * time.Hour)
-	refreshClaims := &JWTClaims{
-		UserID:    userID,
-		Email:     email,
-		Username:  username,
-		TokenType: "refresh",
+	return &TokenResponse{
+		AccessToken:      accessTokenString,
+		RefreshToken:     refreshToken,
+		ExpiresAt:        accessExpiresAt,
+		RefreshExpiresAt: refreshExpiresAt,
+		SessionID:        session.ID,
+	}, nil
+}
+
+func (s *jwtService) RefreshAccessToken(ctx context.Context, refreshToken, userAgent, ipAddress string) (*TokenResponse, error) {
+	// Validate refresh token and get claims
+	claims, err := s.ValidateRefreshToken(ctx, refreshToken)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get session to update user agent and IP if changed
+	session, err := s.sessionRepo.GetByRefreshToken(ctx, refreshToken)
+	if err != nil {
+		return nil, errors.New("session not found")
+	}
+
+	// Update session info if changed
+	updated := false
+
+	// Check user agent
+	currentUA := ""
+	if session.UserAgent != nil {
+		currentUA = *session.UserAgent
+	}
+	if currentUA != userAgent {
+		session.SetUserAgent(userAgent)
+		updated = true
+	}
+
+	// Check IP address
+	currentIP := ""
+	if session.IPAddress != nil {
+		currentIP = *session.IPAddress
+	}
+	// Normalize IP for comparison
+	normalizedIP := ipAddress
+	if ipAddress == "::1" {
+		normalizedIP = "127.0.0.1"
+	}
+	if currentIP != normalizedIP && normalizedIP != "" {
+		session.SetIPAddress(ipAddress)
+		updated = true
+	}
+
+	if updated {
+		s.sessionRepo.Update(ctx, session)
+	}
+
+	// Generate new access token
+	accessExpiresAt := time.Now().Add(time.Duration(s.accessTokenExpiry) * time.Hour)
+
+	accessClaims := &JWTClaims{
+		UserID:    claims.UserID,
+		Email:     claims.Email,
+		Username:  claims.Username,
+		TokenType: "access",
+		SessionID: claims.SessionID,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(refreshExpiresAt),
+			ExpiresAt: jwt.NewNumericDate(accessExpiresAt),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			NotBefore: jwt.NewNumericDate(time.Now()),
 			Issuer:    "linkedin-clone",
-			Subject:   "refresh_token",
+			Subject:   "access_token",
 			ID:        uuid.NewString(),
 		},
 	}
 
-	refreshToken := jwt.NewWithClaims(jwt.SigningMethodHS256, refreshClaims)
-	refreshTokenString, err := refreshToken.SignedString([]byte(s.secretKey))
+	accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims)
+	accessTokenString, err := accessToken.SignedString([]byte(s.secretKey))
 	if err != nil {
 		return nil, err
 	}
 
 	return &TokenResponse{
 		AccessToken:      accessTokenString,
-		RefreshToken:     refreshTokenString,
+		RefreshToken:     refreshToken, // Keep the same refresh token
 		ExpiresAt:        accessExpiresAt,
-		RefreshExpiresAt: refreshExpiresAt,
+		RefreshExpiresAt: session.ExpiresAt,
+		SessionID:        session.ID,
 	}, nil
 }
 
@@ -116,27 +222,54 @@ func (s *jwtService) ValidateToken(tokenString string) (*JWTClaims, error) {
 	return claims, nil
 }
 
-func (s *jwtService) ValidateRefreshToken(tokenString string) (*JWTClaims, error) {
-	claims, err := s.parseToken(tokenString)
-	if err != nil {
-		return nil, err
-	}
+func (s *jwtService) ValidateRefreshToken(ctx context.Context, refreshToken string) (*JWTClaims, error) {
 
-	if claims.TokenType != "refresh" {
-		return nil, errors.New("invalid token type: expected refresh token")
-	}
-
-	return claims, nil
-}
-
-func (s *jwtService) RefreshAccessToken(refreshToken string) (*TokenResponse, error) {
-
-	claims, err := s.ValidateRefreshToken(refreshToken)
+	session, err := s.sessionRepo.GetByRefreshToken(ctx, refreshToken)
 	if err != nil {
 		return nil, errors.New("invalid refresh token")
 	}
 
-	return s.GenerateTokens(claims.UserID, claims.Email, claims.Username)
+	if session.Status != entities.SessionActive {
+		return nil, errors.New("session is not active")
+	}
+
+	if session.ExpiresAt.Before(time.Now()) {
+
+		session.Status = entities.SessionExpired
+		s.sessionRepo.Update(ctx, session)
+		return nil, errors.New("refresh token expired")
+	}
+
+	now := time.Now()
+	s.sessionRepo.UpdateLastUsedAt(ctx, session.ID, now)
+
+	return &JWTClaims{
+		UserID:    session.UserID,
+		Email:     session.User.Email,
+		Username:  session.User.Username,
+		TokenType: "refresh",
+		SessionID: session.ID,
+	}, nil
+}
+
+func (s *jwtService) RevokeSession(ctx context.Context, sessionID uint) error {
+	return s.sessionRepo.RevokeSession(ctx, sessionID)
+}
+
+func (s *jwtService) RevokeUserSessions(ctx context.Context, userID uint) error {
+	return s.sessionRepo.RevokeUserSessions(ctx, userID)
+}
+
+func (s *jwtService) RevokeRefreshToken(ctx context.Context, refreshToken string) error {
+	return s.sessionRepo.RevokeSessionByToken(ctx, refreshToken)
+}
+
+func (s *jwtService) GetUserActiveSessions(ctx context.Context, userID uint, limit, offset int) ([]*entities.Session, error) {
+	return s.sessionRepo.GetUserActiveSessions(ctx, userID, limit, offset)
+}
+
+func (s *jwtService) CleanupExpiredSessions(ctx context.Context) error {
+	return s.sessionRepo.DeleteExpiredSessions(ctx)
 }
 
 func (s *jwtService) parseToken(tokenString string) (*JWTClaims, error) {
@@ -158,14 +291,15 @@ func (s *jwtService) parseToken(tokenString string) (*JWTClaims, error) {
 	return nil, errors.New("invalid token")
 }
 
-func (s *jwtService) GenerateToken(userID uint, email, username string) (*TokenResponse, error) {
-	tokens, err := s.GenerateTokens(userID, email, username)
-	if err != nil {
-		return nil, err
+func (s *jwtService) generateSecureToken() (string, error) {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
 	}
+	return hex.EncodeToString(bytes), nil
+}
 
-	return &TokenResponse{
-		AccessToken: tokens.AccessToken,
-		ExpiresAt:   tokens.ExpiresAt,
-	}, nil
+func (s *jwtService) hashToken(token string) string {
+	hash := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(hash[:])
 }

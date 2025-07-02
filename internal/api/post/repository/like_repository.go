@@ -21,9 +21,19 @@ func (r *likeRepository) Create(ctx context.Context, like *entities.Like) error 
 }
 
 func (r *likeRepository) Delete(ctx context.Context, userID, postID uint) error {
-	return r.db.WithContext(ctx).
+	result := r.db.WithContext(ctx).
 		Where("user_id = ? AND post_id = ?", userID, postID).
-		Delete(&entities.Like{}).Error
+		Delete(&entities.Like{})
+
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+
+	return nil
 }
 
 func (r *likeRepository) FindByUserAndPost(ctx context.Context, userID, postID uint) (*entities.Like, error) {
@@ -42,6 +52,7 @@ func (r *likeRepository) GetPostLikes(ctx context.Context, postID uint, limit, o
 	err := r.db.WithContext(ctx).
 		Preload("User").
 		Where("post_id = ?", postID).
+		Order("created_at DESC").
 		Limit(limit).
 		Offset(offset).
 		Find(&likes).Error

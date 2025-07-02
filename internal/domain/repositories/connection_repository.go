@@ -1,4 +1,3 @@
-// internal/domain/repositories/connection_repository.go
 package repositories
 
 import (

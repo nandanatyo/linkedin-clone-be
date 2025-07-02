@@ -8,6 +8,7 @@ import (
 	"linked-clone/pkg/logger"
 	"linked-clone/pkg/response"
 	validation "linked-clone/pkg/validator"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
@@ -529,4 +530,110 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 	})
 
 	response.Success(c, result)
+}
+
+func (h *AuthHandler) Logout(c *gin.Context) {
+	ctx := c.Request.Context()
+	traceID := middleware.GetTraceID(c)
+	userID := middleware.GetUserID(c)
+
+	var req struct {
+		RefreshToken string `json:"refresh_token" validate:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request body", err.Error())
+		return
+	}
+
+	if err := h.validator.Validate(&req); err != nil {
+		response.ValidationErrors(c, err)
+		return
+	}
+
+	h.logger.WithTraceID(traceID).LogAuthEvent(ctx, logger.AuthEventLog{
+		UserID:    userID,
+		Action:    "logout_attempt",
+		IP:        c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
+		Success:   false,
+	})
+
+	if err := h.authService.Logout(ctx, req.RefreshToken); err != nil {
+		h.logger.WithTraceID(traceID).LogAuthEvent(ctx, logger.AuthEventLog{
+			UserID:     userID,
+			Action:     "logout_failed",
+			IP:         c.ClientIP(),
+			UserAgent:  c.Request.UserAgent(),
+			Success:    false,
+			FailReason: err.Error(),
+		})
+
+		response.InternalServerError(c, "Logout failed", err.Error())
+		return
+	}
+
+	h.logger.WithTraceID(traceID).LogAuthEvent(ctx, logger.AuthEventLog{
+		UserID:    userID,
+		Action:    "logout_success",
+		IP:        c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
+		Success:   true,
+	})
+
+	response.Success(c, gin.H{"message": "Logged out successfully"})
+}
+
+func (h *AuthHandler) GetActiveSessions(c *gin.Context) {
+	ctx := c.Request.Context()
+	userID := middleware.GetUserID(c)
+
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+	sessions, err := h.authService.GetUserActiveSessions(ctx, userID, limit, offset)
+	if err != nil {
+		h.logger.Error("Failed to get active sessions", "error", err)
+		response.InternalServerError(c, "Failed to get sessions", err.Error())
+		return
+	}
+
+	response.Success(c, gin.H{
+		"sessions": sessions,
+		"limit":    limit,
+		"offset":   offset,
+	})
+}
+
+func (h *AuthHandler) RevokeSession(c *gin.Context) {
+	ctx := c.Request.Context()
+	userID := middleware.GetUserID(c)
+
+	sessionIDStr := c.Param("sessionId")
+	sessionID, err := strconv.ParseUint(sessionIDStr, 10, 32)
+	if err != nil {
+		response.BadRequest(c, "Invalid session ID", err.Error())
+		return
+	}
+
+	if err := h.authService.RevokeSession(ctx, userID, uint(sessionID)); err != nil {
+		h.logger.Error("Failed to revoke session", "error", err)
+		response.InternalServerError(c, "Failed to revoke session", err.Error())
+		return
+	}
+
+	response.Success(c, gin.H{"message": "Session revoked successfully"})
+}
+
+func (h *AuthHandler) RevokeAllSessions(c *gin.Context) {
+	ctx := c.Request.Context()
+	userID := middleware.GetUserID(c)
+
+	if err := h.authService.RevokeAllUserSessions(ctx, userID); err != nil {
+		h.logger.Error("Failed to revoke all sessions", "error", err)
+		response.InternalServerError(c, "Failed to revoke sessions", err.Error())
+		return
+	}
+
+	response.Success(c, gin.H{"message": "All sessions revoked successfully"})
 }

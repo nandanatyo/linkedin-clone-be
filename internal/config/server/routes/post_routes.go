@@ -10,27 +10,23 @@ func PostRoutes(rg *gin.RouterGroup, deps *Dependencies) {
 
 	posts := rg.Group("/posts")
 	{
-		// Public endpoints
+
 		posts.GET("/:id", deps.PostHandler.GetPost)
 		posts.GET("/user/:user_id", deps.PostHandler.GetUserPosts)
 		posts.GET("/:id/comments", deps.PostHandler.GetComments)
-		posts.GET("/:id/likes", deps.PostHandler.GetPostLikes) // NEW
+		posts.GET("/:id/likes", deps.PostHandler.GetPostLikes)
 
-		// Protected endpoints
 		posts.GET("", authMiddleware, deps.PostHandler.GetFeed)
 		posts.PUT("/:id", authMiddleware, deps.PostHandler.UpdatePost)
 		posts.DELETE("/:id", authMiddleware, deps.PostHandler.DeletePost)
 
-		// Like endpoints - NEW
 		posts.POST("/:id/like", authMiddleware, deps.PostHandler.LikePost)
 		posts.DELETE("/:id/like", authMiddleware, deps.PostHandler.UnlikePost)
 
-		// Comment endpoints - NEW
 		posts.POST("/:id/comments", authMiddleware, deps.PostHandler.AddComment)
 		posts.PUT("/comments/:commentId", authMiddleware, deps.PostHandler.UpdateComment)
 		posts.DELETE("/comments/:commentId", authMiddleware, deps.PostHandler.DeleteComment)
 
-		// Create post with file upload
 		posts.POST("",
 			authMiddleware,
 			middleware.FileUploadMiddleware(10<<20, []string{".jpg", ".jpeg", ".png", ".gif", ".webp"}),

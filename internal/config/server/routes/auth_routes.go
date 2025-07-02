@@ -39,5 +39,25 @@ func AuthRoutes(rg *gin.RouterGroup, deps *Dependencies) {
 			authMiddleware,
 			middleware.RateLimitMiddleware(time.Minute, 10, deps.Logger),
 			deps.AuthHandler.VerifyEmail)
+
+		auth.POST("/logout",
+			authMiddleware,
+			middleware.RateLimitMiddleware(time.Minute, 10, deps.Logger),
+			deps.AuthHandler.Logout)
+
+		auth.GET("/sessions",
+			authMiddleware,
+			middleware.RateLimitMiddleware(time.Minute, 30, deps.Logger),
+			deps.AuthHandler.GetActiveSessions)
+
+		auth.DELETE("/sessions/:sessionId",
+			authMiddleware,
+			middleware.RateLimitMiddleware(time.Minute, 20, deps.Logger),
+			deps.AuthHandler.RevokeSession)
+
+		auth.DELETE("/sessions",
+			authMiddleware,
+			middleware.RateLimitMiddleware(time.Minute, 5, deps.Logger),
+			deps.AuthHandler.RevokeAllSessions)
 	}
 }

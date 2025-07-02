@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/gin-gonic/gin"
 	"linked-clone/internal/api/auth/dto"
 	"linked-clone/internal/domain/entities"
 	"linked-clone/internal/domain/repositories"
@@ -43,7 +44,6 @@ func NewAuthService(
 }
 
 func (s *authService) Register(ctx context.Context, req *dto.RegisterRequest) (*dto.AuthResponse, error) {
-
 	if _, err := s.userRepo.GetByEmail(ctx, req.Email); err == nil {
 		return nil, errors.New("email already registered")
 	}
@@ -76,7 +76,6 @@ func (s *authService) Register(ctx context.Context, req *dto.RegisterRequest) (*
 	if err := s.redisClient.Set(ctx, cacheKey, verificationCode, 15*time.Minute); err != nil {
 		s.logger.Error("Failed to cache verification code", "error", err)
 	} else {
-
 		go func() {
 			if err := s.emailService.SendVerificationEmail(user.Email, user.FullName, verificationCode); err != nil {
 				s.logger.Error("Failed to send verification email", "error", err)
@@ -84,7 +83,8 @@ func (s *authService) Register(ctx context.Context, req *dto.RegisterRequest) (*
 		}()
 	}
 
-	tokens, err := s.jwtService.GenerateTokens(user.ID, user.Email, user.Username)
+	userAgent, ipAddress := s.extractRequestInfo(ctx)
+	tokens, err := s.jwtService.GenerateTokens(ctx, user.ID, user.Email, user.Username, userAgent, ipAddress)
 	if err != nil {
 		s.logger.Error("Failed to generate tokens", "error", err)
 		return nil, errors.New("failed to generate tokens")
@@ -107,9 +107,7 @@ func (s *authService) Register(ctx context.Context, req *dto.RegisterRequest) (*
 		RefreshExpiresAt: tokens.RefreshExpiresAt,
 	}, nil
 }
-
 func (s *authService) Login(ctx context.Context, req *dto.LoginRequest) (*dto.AuthResponse, error) {
-
 	user, err := s.userRepo.GetByEmail(ctx, req.Email)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -123,7 +121,8 @@ func (s *authService) Login(ctx context.Context, req *dto.LoginRequest) (*dto.Au
 		return nil, errors.New("invalid email or password")
 	}
 
-	tokens, err := s.jwtService.GenerateTokens(user.ID, user.Email, user.Username)
+	userAgent, ipAddress := s.extractRequestInfo(ctx)
+	tokens, err := s.jwtService.GenerateTokens(ctx, user.ID, user.Email, user.Username, userAgent, ipAddress)
 	if err != nil {
 		s.logger.Error("Failed to generate tokens", "error", err)
 		return nil, errors.New("failed to generate tokens")
@@ -148,13 +147,14 @@ func (s *authService) Login(ctx context.Context, req *dto.LoginRequest) (*dto.Au
 }
 
 func (s *authService) RefreshToken(ctx context.Context, req *dto.RefreshTokenRequest) (*dto.AuthResponse, error) {
+	userAgent, ipAddress := s.extractRequestInfo(ctx)
 
-	tokens, err := s.jwtService.RefreshAccessToken(req.RefreshToken)
+	tokens, err := s.jwtService.RefreshAccessToken(ctx, req.RefreshToken, userAgent, ipAddress)
 	if err != nil {
 		return nil, errors.New("invalid refresh token")
 	}
 
-	claims, err := s.jwtService.ValidateRefreshToken(req.RefreshToken)
+	claims, err := s.jwtService.ValidateRefreshToken(ctx, req.RefreshToken)
 	if err != nil {
 		return nil, errors.New("invalid refresh token")
 	}
@@ -274,4 +274,47 @@ func (s *authService) ResetPassword(ctx context.Context, req *dto.ResetPasswordR
 	s.redisClient.Delete(ctx, cacheKey)
 
 	return nil
+}
+
+func (s *authService) Logout(ctx context.Context, refreshToken string) error {
+	return s.jwtService.RevokeRefreshToken(ctx, refreshToken)
+}
+
+func (s *authService) GetUserActiveSessions(ctx context.Context, userID uint, limit, offset int) ([]*entities.Session, error) {
+	return s.jwtService.GetUserActiveSessions(ctx, userID, limit, offset)
+}
+
+func (s *authService) RevokeSession(ctx context.Context, userID, sessionID uint) error {
+
+	sessions, err := s.jwtService.GetUserActiveSessions(ctx, userID, 1000, 0)
+	if err != nil {
+		return err
+	}
+
+	found := false
+	for _, session := range sessions {
+		if session.ID == sessionID {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return errors.New("session not found or does not belong to user")
+	}
+
+	return s.jwtService.RevokeSession(ctx, sessionID)
+}
+
+func (s *authService) RevokeAllUserSessions(ctx context.Context, userID uint) error {
+	return s.jwtService.RevokeUserSessions(ctx, userID)
+}
+
+func (s *authService) extractRequestInfo(ctx context.Context) (userAgent, ipAddress string) {
+
+	if ginCtx, ok := ctx.Value("gin_context").(*gin.Context); ok {
+		userAgent = ginCtx.Request.UserAgent()
+		ipAddress = ginCtx.ClientIP()
+	}
+	return userAgent, ipAddress
 }

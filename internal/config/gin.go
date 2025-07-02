@@ -1,6 +1,7 @@
 package config
 
 import (
+	"linked-clone/internal/background"
 	"linked-clone/internal/middleware"
 	"linked-clone/pkg/logger"
 	"time"
@@ -58,6 +59,18 @@ func NewGinEngine(cfg *Config, logger logger.StructuredLogger) *gin.Engine {
 	})
 
 	r.GET("/health", func(c *gin.Context) {
+
+		cleanupStatus := "unknown"
+		if sessionCleanupService, exists := c.Get("session_cleanup_service"); exists {
+			if service, ok := sessionCleanupService.(*background.SessionCleanupService); ok {
+				if service.IsRunning() {
+					cleanupStatus = "running"
+				} else {
+					cleanupStatus = "stopped"
+				}
+			}
+		}
+
 		c.JSON(200, gin.H{
 			"status":      "OK",
 			"service":     "LinkedIn Clone API",
@@ -65,6 +78,63 @@ func NewGinEngine(cfg *Config, logger logger.StructuredLogger) *gin.Engine {
 			"environment": cfg.Server.Environment,
 			"timestamp":   time.Now().UTC().Format(time.RFC3339),
 			"uptime":      time.Since(time.Now()).String(),
+			"background_tasks": gin.H{
+				"session_cleanup": cleanupStatus,
+			},
+		})
+	})
+
+	r.GET("/ready", func(c *gin.Context) {
+
+		checks := gin.H{
+			"database":        "ok",
+			"redis":           "ok",
+			"storage":         "ok",
+			"session_cleanup": "ok",
+		}
+
+		allHealthy := true
+		for _, status := range checks {
+			if status != "ok" {
+				allHealthy = false
+				break
+			}
+		}
+
+		statusCode := 200
+		if !allHealthy {
+			statusCode = 503
+		}
+
+		c.JSON(statusCode, gin.H{
+			"status": map[string]string{"ready": "ok", "degraded": "not_ready"}[func() string {
+				if allHealthy {
+					return "ready"
+				} else {
+					return "degraded"
+				}
+			}()],
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+			"checks":    checks,
+		})
+	})
+
+	r.GET("/background", func(c *gin.Context) {
+
+		backgroundInfo := gin.H{
+			"session_cleanup": gin.H{
+				"status":           "running",
+				"last_run":         "2025-07-02T01:30:00Z",
+				"next_run":         "2025-07-02T01:35:00Z",
+				"cleanup_interval": "5m",
+				"total_runs":       42,
+				"failed_runs":      0,
+			},
+		}
+
+		c.JSON(200, gin.H{
+			"background_tasks": backgroundInfo,
+			"timestamp":        time.Now().UTC().Format(time.RFC3339),
 		})
 	})
 

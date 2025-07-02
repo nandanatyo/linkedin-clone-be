@@ -64,41 +64,43 @@ func NewJWTService(secretKey string, accessTokenExpiryHours int, sessionRepo rep
 	}
 }
 
-// pkg/auth/jwt.go - UPDATED GENERATE TOKENS METHOD
-
 func (s *jwtService) GenerateTokens(ctx context.Context, userID uint, email, username, userAgent, ipAddress string) (*TokenResponse, error) {
-	// Generate refresh token
+
 	refreshToken, err := s.generateSecureToken()
 	if err != nil {
 		return nil, err
 	}
 
-	// Create token hash for storage
 	tokenHash := s.hashToken(refreshToken)
 
-	// Set expiration times
 	accessExpiresAt := time.Now().Add(time.Duration(s.accessTokenExpiry) * time.Hour)
 	refreshExpiresAt := time.Now().Add(time.Duration(s.refreshTokenExpiry) * 24 * time.Hour)
 
-	// Create session record
 	session := &entities.Session{
 		UserID:       userID,
 		RefreshToken: refreshToken,
 		TokenHash:    tokenHash,
 		Status:       entities.SessionActive,
 		ExpiresAt:    refreshExpiresAt,
-		LastUsedAt:   nil, // Will be set on first use
+		LastUsedAt:   nil,
 	}
 
-	// Set user agent and IP address safely using helper methods
-	session.SetUserAgent(userAgent)
-	session.SetIPAddress(ipAddress)
+	if userAgent != "" {
+		session.UserAgent = &userAgent
+	}
+	if ipAddress != "" {
+		if ipAddress == "::1" {
+			normalizedIP := "127.0.0.1"
+			session.IPAddress = &normalizedIP
+		} else {
+			session.IPAddress = &ipAddress
+		}
+	}
 
 	if err := s.sessionRepo.Create(ctx, session); err != nil {
 		return nil, err
 	}
 
-	// Generate access token with session ID
 	accessClaims := &JWTClaims{
 		UserID:    userID,
 		Email:     email,
@@ -131,22 +133,28 @@ func (s *jwtService) GenerateTokens(ctx context.Context, userID uint, email, use
 }
 
 func (s *jwtService) RefreshAccessToken(ctx context.Context, refreshToken, userAgent, ipAddress string) (*TokenResponse, error) {
-	// Validate refresh token and get claims
-	claims, err := s.ValidateRefreshToken(ctx, refreshToken)
-	if err != nil {
-		return nil, err
-	}
 
-	// Get session to update user agent and IP if changed
 	session, err := s.sessionRepo.GetByRefreshToken(ctx, refreshToken)
 	if err != nil {
-		return nil, errors.New("session not found")
+		return nil, errors.New("invalid refresh token")
 	}
 
-	// Update session info if changed
+	if session.Status != entities.SessionActive {
+		return nil, errors.New("session is not active")
+	}
+
+	if session.ExpiresAt.Before(time.Now()) {
+
+		session.Status = entities.SessionExpired
+		s.sessionRepo.Update(ctx, session)
+		return nil, errors.New("refresh token expired")
+	}
+
+	now := time.Now()
+	s.sessionRepo.UpdateLastUsedAt(ctx, session.ID, now)
+
 	updated := false
 
-	// Check user agent
 	currentUA := ""
 	if session.UserAgent != nil {
 		currentUA = *session.UserAgent
@@ -156,12 +164,11 @@ func (s *jwtService) RefreshAccessToken(ctx context.Context, refreshToken, userA
 		updated = true
 	}
 
-	// Check IP address
 	currentIP := ""
 	if session.IPAddress != nil {
 		currentIP = *session.IPAddress
 	}
-	// Normalize IP for comparison
+
 	normalizedIP := ipAddress
 	if ipAddress == "::1" {
 		normalizedIP = "127.0.0.1"
@@ -175,15 +182,14 @@ func (s *jwtService) RefreshAccessToken(ctx context.Context, refreshToken, userA
 		s.sessionRepo.Update(ctx, session)
 	}
 
-	// Generate new access token
 	accessExpiresAt := time.Now().Add(time.Duration(s.accessTokenExpiry) * time.Hour)
 
 	accessClaims := &JWTClaims{
-		UserID:    claims.UserID,
-		Email:     claims.Email,
-		Username:  claims.Username,
+		UserID:    session.UserID,
+		Email:     session.User.Email,
+		Username:  session.User.Username,
 		TokenType: "access",
-		SessionID: claims.SessionID,
+		SessionID: session.ID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(accessExpiresAt),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -202,7 +208,7 @@ func (s *jwtService) RefreshAccessToken(ctx context.Context, refreshToken, userA
 
 	return &TokenResponse{
 		AccessToken:      accessTokenString,
-		RefreshToken:     refreshToken, // Keep the same refresh token
+		RefreshToken:     refreshToken,
 		ExpiresAt:        accessExpiresAt,
 		RefreshExpiresAt: session.ExpiresAt,
 		SessionID:        session.ID,

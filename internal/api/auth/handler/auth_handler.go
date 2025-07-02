@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"linked-clone/internal/api/auth/dto"
 	"linked-clone/internal/api/auth/service"
 	"linked-clone/internal/middleware"
@@ -74,7 +75,10 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		"username", req.Username,
 		"full_name", req.FullName)
 
-	result, err := h.authService.Register(ctx, &req)
+	// Add gin context to the context for extractRequestInfo method
+	ctxWithGin := context.WithValue(ctx, "gin_context", c)
+
+	result, err := h.authService.Register(ctxWithGin, &req)
 	if err != nil {
 		switch {
 		case err.Error() == "email already registered":
@@ -180,7 +184,10 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		Success:   false,
 	})
 
-	result, err := h.authService.Login(ctx, &req)
+	// Add gin context to the context for extractRequestInfo method
+	ctxWithGin := context.WithValue(ctx, "gin_context", c)
+
+	result, err := h.authService.Login(ctxWithGin, &req)
 	if err != nil {
 		h.logger.WithTraceID(traceID).LogAuthEvent(ctx, logger.AuthEventLog{
 			Email:      req.Email,
@@ -460,7 +467,9 @@ func (h *AuthHandler) RefreshToken(c *gin.Context) {
 		TokenType: "refresh_token",
 	})
 
-	result, err := h.authService.RefreshToken(ctx, &req)
+	ctxWithGin := context.WithValue(ctx, "gin_context", c)
+
+	result, err := h.authService.RefreshToken(ctxWithGin, &req)
 	if err != nil {
 		h.logger.WithTraceID(traceID).LogAuthEvent(ctx, logger.AuthEventLog{
 			Action:     "token_refresh_failed",

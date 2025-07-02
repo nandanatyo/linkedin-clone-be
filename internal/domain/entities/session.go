@@ -35,21 +35,23 @@ func (Session) TableName() string {
 }
 
 func (s *Session) SetIPAddress(ip string) {
-	if ip != "" && ip != "::1" && ip != "127.0.0.1" {
-		s.IPAddress = &ip
-	} else if ip == "::1" {
-
-		localhost := "127.0.0.1"
-		s.IPAddress = &localhost
-	} else if ip == "127.0.0.1" {
-		s.IPAddress = &ip
+	if ip == "" {
+		return
 	}
 
+	if ip == "::1" {
+		normalized := "127.0.0.1"
+		s.IPAddress = &normalized
+		return
+	}
+
+	s.IPAddress = &ip
 }
 
 func (s *Session) SetUserAgent(ua string) {
-	if ua != "" {
-		s.UserAgent = &ua
+	if ua == "" {
+		return
 	}
 
+	s.UserAgent = &ua
 }

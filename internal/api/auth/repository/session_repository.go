@@ -19,13 +19,6 @@ func NewSessionRepository(db *gorm.DB) repositories.SessionRepository {
 
 func (r *sessionRepository) Create(ctx context.Context, session *entities.Session) error {
 
-	if session.UserAgent != nil && *session.UserAgent == "" {
-		session.UserAgent = nil
-	}
-	if session.IPAddress != nil && *session.IPAddress == "" {
-		session.IPAddress = nil
-	}
-
 	return r.db.WithContext(ctx).Create(session).Error
 }
 
@@ -68,13 +61,6 @@ func (r *sessionRepository) GetUserActiveSessions(ctx context.Context, userID ui
 }
 
 func (r *sessionRepository) Update(ctx context.Context, session *entities.Session) error {
-
-	if session.UserAgent != nil && *session.UserAgent == "" {
-		session.UserAgent = nil
-	}
-	if session.IPAddress != nil && *session.IPAddress == "" {
-		session.IPAddress = nil
-	}
 
 	return r.db.WithContext(ctx).Save(session).Error
 }
